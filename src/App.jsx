@@ -102,12 +102,11 @@ function EnvironmentData({ lat, lon }) {
         out geom;
       `;
       
-      // ROTATION ARRAY: App will try these servers in order until one answers
+      // GLOBALLY ACCESSIBLE SERVERS ONLY
       const endpoints = [
-        'https://overpass.osm.ch/api/interpreter', // Swiss (Highly reliable)
-        'https://overpass.kumi.systems/api/interpreter', // Kumi
-        'https://overpass-api.de/api/interpreter', // German Main
-        'https://lz4.overpass-api.de/api/interpreter' // German LZ4
+        'https://overpass.openstreetmap.fr/api/interpreter', // French (High capacity, Global)
+        'https://lz4.overpass-api.de/api/interpreter',       // German LZ4 (Global)
+        'https://overpass-api.de/api/interpreter',           // German Main (Global)
       ];
 
       let json = null;
@@ -122,12 +121,16 @@ function EnvironmentData({ lat, lon }) {
           });
           
           if (res.ok) {
-            json = await res.json();
-            success = true;
-            break; // Stop checking servers once we get the data
+            const tempJson = await res.json();
+            // SAFEGUARD: Only accept the server's data if it actually contains map elements
+            if (tempJson && tempJson.elements && tempJson.elements.length > 0) {
+              json = tempJson;
+              success = true;
+              break; 
+            }
           }
         } catch (error) {
-          console.warn(`Server ${url} failed, trying next...`);
+          console.warn(`Server ${url} failed or returned empty, trying next...`);
         }
       }
 
@@ -268,7 +271,7 @@ function EnvironmentData({ lat, lon }) {
     return (
       <Html center>
         <div className="bg-red-900 text-white px-4 py-2 md:px-6 md:py-3 rounded-lg shadow-2xl font-bold whitespace-nowrap text-sm md:text-base">
-          All Map Servers are busy. Please try moving the pin slightly!
+          All Map Servers are busy or no map data exists here. Try moving the pin!
         </div>
       </Html>
     );
