@@ -1,4 +1,4 @@
-import './index.css' // <-- ADDED: Forces Vite to bundle your Tailwind styles
+import './index.css' 
 import { useState, useEffect, Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { MapControls, Environment, TransformControls, Html } from '@react-three/drei'
@@ -91,10 +91,17 @@ function EnvironmentData({ lat, lon }) {
         out geom;
       `;
       
-      const url = `https://lz4.overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+      const url = 'https://overpass-api.de/api/interpreter';
       
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: `data=${encodeURIComponent(query)}`
+        });
+        
         if (!res.ok) throw new Error("API Limit reached");
         const json = await res.json();
         
@@ -369,7 +376,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* ADDED w-full and h-full to this container to ensure the canvas doesn't collapse */}
       <div className="flex-1 relative w-full h-full bg-gray-900">
         {viewMode === '2D' && (
           <MapContainer center={[lat, lon]} zoom={17} className="w-full h-full">
