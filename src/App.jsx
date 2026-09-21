@@ -93,48 +93,45 @@ function EnvironmentData({ lat, lon }) {
     
     const fetchEnvironment = async () => {
       setStatus('loading');
+      // Expanded search radius to 800 meters to ensure we catch data
       const query = `
-        [out:json];
+        [out:json][timeout:25];
         (
-          way["building"](around:300, ${lat}, ${lon});
-          way["highway"](around:300, ${lat}, ${lon});
+          way["building"](around:800, ${lat}, ${lon});
+          way["highway"](around:800, ${lat}, ${lon});
         );
         out geom;
       `;
       
-      // GLOBALLY ACCESSIBLE SERVERS ONLY
       const endpoints = [
-        'https://overpass.openstreetmap.fr/api/interpreter', // French (High capacity, Global)
-        'https://lz4.overpass-api.de/api/interpreter',       // German LZ4 (Global)
-        'https://overpass-api.de/api/interpreter',           // German Main (Global)
+        'https://overpass-api.de/api/interpreter',           
+        'https://overpass.openstreetmap.fr/api/interpreter', 
+        'https://overpass.kumi.systems/api/interpreter'
       ];
 
       let json = null;
-      let success = false;
 
       for (const url of endpoints) {
         try {
           const res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            headers: { 
+              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded' 
+            },
             body: `data=${encodeURIComponent(query)}`
           });
           
           if (res.ok) {
-            const tempJson = await res.json();
-            // SAFEGUARD: Only accept the server's data if it actually contains map elements
-            if (tempJson && tempJson.elements && tempJson.elements.length > 0) {
-              json = tempJson;
-              success = true;
-              break; 
-            }
+            json = await res.json();
+            break; // Stop checking servers once we get a successful 200 OK response
           }
         } catch (error) {
-          console.warn(`Server ${url} failed or returned empty, trying next...`);
+          console.warn(`Server ${url} failed, trying next...`);
         }
       }
 
-      if (!success || !json) {
+      if (!json || !json.elements) {
         if (isMounted) setStatus('error');
         return;
       }
@@ -271,7 +268,7 @@ function EnvironmentData({ lat, lon }) {
     return (
       <Html center>
         <div className="bg-red-900 text-white px-4 py-2 md:px-6 md:py-3 rounded-lg shadow-2xl font-bold whitespace-nowrap text-sm md:text-base">
-          All Map Servers are busy or no map data exists here. Try moving the pin!
+          Network Error: Unable to reach map servers.
         </div>
       </Html>
     );
