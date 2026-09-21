@@ -3,7 +3,7 @@ import { useState, useEffect, Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { MapControls, Environment, TransformControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet' // <-- ADDED useMap
 import 'leaflet/dist/leaflet.css'
 
 import L from 'leaflet'
@@ -17,6 +17,19 @@ L.Icon.Default.mergeOptions({
 import { Model as DamagedCar } from './DamagedCar'
 import { Model as AltoCar } from './AltoCar'
 import { Model as SwiftCar } from './SwiftCar'
+
+// --- MAP RESIZE FIX COMPONENT ---
+// This forces Leaflet to recalculate its grid instantly, curing the gray screen
+function MapResizer() {
+  const map = useMap();
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+    return () => clearTimeout(timeout);
+  }, [map]);
+  return null;
+}
 
 // --- RESILIENT 3D COMPONENTS ---
 
@@ -37,7 +50,7 @@ function RoadMesh({ pts }) {
     try {
       if (pts.length < 2) return null;
       const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
-      return new THREE.TubeGeometry(curve, pts.length * 3, 4, 8, false); // 8 meters wide
+      return new THREE.TubeGeometry(curve, pts.length * 3, 4, 8, false); 
     } catch (e) {
       return null;
     }
@@ -91,7 +104,7 @@ function EnvironmentData({ lat, lon }) {
         out geom;
       `;
       
-      const url = 'https://overpass-api.de/api/interpreter';
+      const url = 'https://overpass.openstreetmap.fr/api/interpreter';
       
       try {
         const res = await fetch(url, {
@@ -113,7 +126,6 @@ function EnvironmentData({ lat, lon }) {
         const genFences = [];
         const genProcHouses = [];
 
-        // 1. Parse OSM Data
         json.elements.forEach(el => {
           if (el.type === 'way' && el.tags?.building) {
             if (el.geometry.length < 3) return;
@@ -147,31 +159,28 @@ function EnvironmentData({ lat, lon }) {
           }
         });
 
-        // 2. Build the Global Collision Matrix (Samples points along all roads)
         const roadCollisionNodes = [];
         genRoads.forEach(pts => {
           try {
             const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
-            const steps = Math.floor(curve.getLength() / 3); // Map a collision point every 3 meters
+            const steps = Math.floor(curve.getLength() / 3); 
             for (let i = 0; i <= steps; i++) {
               roadCollisionNodes.push(curve.getPoint(i / steps));
             }
           } catch (e) {}
         });
 
-        // Collision Helper Function: Returns true if the spot is safe (far enough from all roads)
         const hasClearance = (x, y, safeRadius) => {
           for (let i = 0; i < roadCollisionNodes.length; i++) {
             const dx = roadCollisionNodes[i].x - x;
             const dy = roadCollisionNodes[i].y - y;
             if (Math.sqrt(dx * dx + dy * dy) < safeRadius) {
-              return false; // Too close to a road, reject it!
+              return false; 
             }
           }
-          return true; // Area is clear
+          return true; 
         };
 
-        // 3. Spatially-Aware Procedural Generator
         genRoads.forEach(pts => {
           try {
             const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
@@ -189,7 +198,6 @@ function EnvironmentData({ lat, lon }) {
               const roadRotation = Math.atan2(tangent.y, tangent.x);
 
               [-1, 1].forEach(side => {
-                // Trees: Request 5.5 meters of clearance from the asphalt
                 if (Math.random() > 0.4) {
                   const treeX = pt.x + (normal.x * (6 + Math.random() * 2) * side);
                   const treeY = pt.y + (normal.y * (6 + Math.random() * 2) * side);
@@ -201,8 +209,6 @@ function EnvironmentData({ lat, lon }) {
                   }
                 }
 
-                // Houses: Request a massive 12 meter clearance zone
-                // This guarantees houses NEVER spawn on intersecting streets
                 if (Math.random() > 0.6 && i % 2 === 0) {
                   const houseX = pt.x + (normal.x * (18 + Math.random() * 5) * side);
                   const houseY = pt.y + (normal.y * (18 + Math.random() * 5) * side);
@@ -236,7 +242,7 @@ function EnvironmentData({ lat, lon }) {
   if (status === 'loading') {
     return (
       <Html center>
-        <div className="bg-gray-800 text-white px-6 py-3 rounded-lg shadow-2xl font-bold flex items-center space-x-3 whitespace-nowrap border border-gray-600">
+        <div className="bg-gray-800 text-white px-4 py-2 md:px-6 md:py-3 rounded-lg shadow-2xl font-bold flex items-center space-x-3 whitespace-nowrap border border-gray-600 text-sm md:text-base">
           <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
           <span>Mapping Environment Geometry...</span>
         </div>
@@ -247,7 +253,7 @@ function EnvironmentData({ lat, lon }) {
   if (status === 'error') {
     return (
       <Html center>
-        <div className="bg-red-900 text-white px-6 py-3 rounded-lg shadow-2xl font-bold whitespace-nowrap">
+        <div className="bg-red-900 text-white px-4 py-2 md:px-6 md:py-3 rounded-lg shadow-2xl font-bold whitespace-nowrap text-sm md:text-base">
           API Rate Limit Exceeded. Try moving the pin slightly!
         </div>
       </Html>
@@ -309,35 +315,37 @@ export default function App() {
   const [cameraEnabled, setCameraEnabled] = useState(true)
 
   return (
-    <div className="flex h-screen bg-gray-900 text-white font-sans overflow-hidden">
+    // RESPONSIVE FIX: flex-col on mobile, md:flex-row on desktop
+    <div className="flex flex-col md:flex-row h-screen bg-gray-900 text-white font-sans overflow-hidden">
       
-      <div className="w-80 bg-gray-800 flex flex-col shadow-2xl z-10">
-        <div className="p-6 flex-1 overflow-y-auto">
-          <h2 className="text-xl font-bold border-b border-gray-700 pb-4 mb-6">ForensiTwin Editor</h2>
+      {/* RESPONSIVE SIDEBAR: h-[40vh] (40% height) on mobile, full height and fixed width on desktop */}
+      <div className="w-full md:w-80 h-[40vh] md:h-full bg-gray-800 flex flex-col shadow-2xl z-10 shrink-0 border-b md:border-b-0 md:border-r border-gray-700">
+        <div className="p-4 md:p-6 flex-1 overflow-y-auto">
+          <h2 className="text-lg md:text-xl font-bold border-b border-gray-700 pb-3 mb-4 md:pb-4 md:mb-6">ForensiTwin Editor</h2>
           
           <button 
             onClick={() => setViewMode(viewMode === '2D' ? '3D' : '2D')}
-            className={`w-full py-3 mb-6 font-bold text-lg rounded shadow-lg transition-colors ${
+            className={`w-full py-2 md:py-3 mb-4 md:mb-6 font-bold text-base md:text-lg rounded shadow-lg transition-colors ${
               viewMode === '2D' ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'
             }`}
           >
             {viewMode === '2D' ? 'Enter 3D Reconstruction ➔' : '⬅ Back to 2D Map'}
           </button>
 
-          <div className="mb-6 bg-gray-700 p-4 rounded-lg">
-            <label className="block text-sm font-semibold text-gray-300 mb-2">📍 Pinned Coordinates</label>
+          <div className="mb-4 md:mb-6 bg-gray-700 p-3 md:p-4 rounded-lg">
+            <label className="block text-xs md:text-sm font-semibold text-gray-300 mb-1 md:mb-2">📍 Pinned Coordinates</label>
             <div className="text-xs text-gray-400 font-mono">Lat: {lat.toFixed(6)}</div>
             <div className="text-xs text-gray-400 font-mono">Lon: {lon.toFixed(6)}</div>
           </div>
 
           {viewMode === '3D' && (
-            <div className="space-y-6">
+            <div className="space-y-4 md:space-y-6">
               <div>
-                <label className="block text-sm font-semibold text-gray-300 mb-2">Vehicle Model</label>
+                <label className="block text-xs md:text-sm font-semibold text-gray-300 mb-1 md:mb-2">Vehicle Model</label>
                 <select 
                   value={activeCar} 
                   onChange={(e) => setActiveCar(e.target.value)}
-                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:outline-none"
+                  className="w-full bg-gray-700 text-white p-2 rounded text-sm md:text-base border border-gray-600 focus:outline-none"
                 >
                   <option value="sedan">Generic Sedan</option>
                   <option value="alto">Maruti Alto</option>
@@ -346,17 +354,17 @@ export default function App() {
               </div>
 
               <div>
-                 <label className="block text-sm font-semibold text-gray-300 mb-2">Kinematic Action</label>
+                 <label className="block text-xs md:text-sm font-semibold text-gray-300 mb-1 md:mb-2">Kinematic Action</label>
                  <div className="flex space-x-2">
                     <button 
                       onClick={() => setControlMode('translate')} 
-                      className={`flex-1 p-2 text-sm font-bold rounded ${controlMode === 'translate' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                      className={`flex-1 p-2 text-xs md:text-sm font-bold rounded ${controlMode === 'translate' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
                     >
                       Slide
                     </button>
                     <button 
                       onClick={() => setControlMode('rotate')} 
-                      className={`flex-1 p-2 text-sm font-bold rounded ${controlMode === 'rotate' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                      className={`flex-1 p-2 text-xs md:text-sm font-bold rounded ${controlMode === 'rotate' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
                     >
                       Rotate
                     </button>
@@ -364,7 +372,7 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-300 mb-2">Frontal Crush Damage</label>
+                <label className="block text-xs md:text-sm font-semibold text-gray-300 mb-1 md:mb-2">Frontal Crush Damage</label>
                 <input 
                   type="range" min="0" max="1" step="0.01" value={crushLevel} 
                   onChange={(e) => setCrushLevel(parseFloat(e.target.value))}
@@ -376,9 +384,11 @@ export default function App() {
         </div>
       </div>
 
+      {/* RESPONSIVE MAP AREA: flex-1 ensures it fills all remaining space on any device */}
       <div className="flex-1 relative w-full h-full bg-gray-900">
         {viewMode === '2D' && (
           <MapContainer center={[lat, lon]} zoom={17} className="w-full h-full">
+            <MapResizer />
             <TileLayer
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution='&copy; OpenStreetMap contributors'
