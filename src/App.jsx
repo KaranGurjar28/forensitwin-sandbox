@@ -3,7 +3,7 @@ import { useState, useEffect, Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { MapControls, Environment, TransformControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet' // <-- ADDED useMap
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet' 
 import 'leaflet/dist/leaflet.css'
 
 import L from 'leaflet'
@@ -19,7 +19,6 @@ import { Model as AltoCar } from './AltoCar'
 import { Model as SwiftCar } from './SwiftCar'
 
 // --- MAP RESIZE FIX COMPONENT ---
-// This forces Leaflet to recalculate its grid instantly, curing the gray screen
 function MapResizer() {
   const map = useMap();
   useEffect(() => {
@@ -32,7 +31,6 @@ function MapResizer() {
 }
 
 // --- RESILIENT 3D COMPONENTS ---
-
 function ForensicGround() {
   return (
     <group>
@@ -104,135 +102,151 @@ function EnvironmentData({ lat, lon }) {
         out geom;
       `;
       
-      const url = 'https://overpass.openstreetmap.fr/api/interpreter';
-      
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: `data=${encodeURIComponent(query)}`
-        });
-        
-        if (!res.ok) throw new Error("API Limit reached");
-        const json = await res.json();
-        
-        if (!isMounted) return;
+      // ROTATION ARRAY: App will try these servers in order until one answers
+      const endpoints = [
+        'https://overpass.osm.ch/api/interpreter', // Swiss (Highly reliable)
+        'https://overpass.kumi.systems/api/interpreter', // Kumi
+        'https://overpass-api.de/api/interpreter', // German Main
+        'https://lz4.overpass-api.de/api/interpreter' // German LZ4
+      ];
 
-        const genBuildings = [];
-        const genRoads = [];
-        const genTrees = [];
-        const genFences = [];
-        const genProcHouses = [];
+      let json = null;
+      let success = false;
 
-        json.elements.forEach(el => {
-          if (el.type === 'way' && el.tags?.building) {
-            if (el.geometry.length < 3) return;
-            const shape = new THREE.Shape();
-            let valid = true;
-            
-            el.geometry.forEach((node, index) => {
-              const x = (node.lon - lon) * 111320 * Math.cos(lat * (Math.PI / 180));
-              const y = (node.lat - lat) * 111320;
-              if (isNaN(x) || isNaN(y)) valid = false;
-              else if (index === 0) shape.moveTo(x, y);
-              else shape.lineTo(x, y);
-            });
-            
-            if (valid) {
-              const height = el.tags?.height ? parseFloat(el.tags.height) : 10;
-              genBuildings.push({ shape, height });
-            }
+      for (const url of endpoints) {
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `data=${encodeURIComponent(query)}`
+          });
+          
+          if (res.ok) {
+            json = await res.json();
+            success = true;
+            break; // Stop checking servers once we get the data
           }
-          else if (el.type === 'way' && el.tags?.highway) {
-            const points = [];
-            el.geometry.forEach(node => {
-              const x = (node.lon - lon) * 111320 * Math.cos(lat * (Math.PI / 180));
-              const y = (node.lat - lat) * 111320;
-              const newPt = new THREE.Vector3(x, y, 0.05);
-              if (points.length === 0 || points[points.length - 1].distanceTo(newPt) > 1.0) {
-                points.push(newPt);
+        } catch (error) {
+          console.warn(`Server ${url} failed, trying next...`);
+        }
+      }
+
+      if (!success || !json) {
+        if (isMounted) setStatus('error');
+        return;
+      }
+        
+      if (!isMounted) return;
+
+      const genBuildings = [];
+      const genRoads = [];
+      const genTrees = [];
+      const genFences = [];
+      const genProcHouses = [];
+
+      json.elements.forEach(el => {
+        if (el.type === 'way' && el.tags?.building) {
+          if (el.geometry.length < 3) return;
+          const shape = new THREE.Shape();
+          let valid = true;
+          
+          el.geometry.forEach((node, index) => {
+            const x = (node.lon - lon) * 111320 * Math.cos(lat * (Math.PI / 180));
+            const y = (node.lat - lat) * 111320;
+            if (isNaN(x) || isNaN(y)) valid = false;
+            else if (index === 0) shape.moveTo(x, y);
+            else shape.lineTo(x, y);
+          });
+          
+          if (valid) {
+            const height = el.tags?.height ? parseFloat(el.tags.height) : 10;
+            genBuildings.push({ shape, height });
+          }
+        }
+        else if (el.type === 'way' && el.tags?.highway) {
+          const points = [];
+          el.geometry.forEach(node => {
+            const x = (node.lon - lon) * 111320 * Math.cos(lat * (Math.PI / 180));
+            const y = (node.lat - lat) * 111320;
+            const newPt = new THREE.Vector3(x, y, 0.05);
+            if (points.length === 0 || points[points.length - 1].distanceTo(newPt) > 1.0) {
+              points.push(newPt);
+            }
+          });
+          if (points.length > 1) genRoads.push(points);
+        }
+      });
+
+      const roadCollisionNodes = [];
+      genRoads.forEach(pts => {
+        try {
+          const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
+          const steps = Math.floor(curve.getLength() / 3); 
+          for (let i = 0; i <= steps; i++) {
+            roadCollisionNodes.push(curve.getPoint(i / steps));
+          }
+        } catch (e) {}
+      });
+
+      const hasClearance = (x, y, safeRadius) => {
+        for (let i = 0; i < roadCollisionNodes.length; i++) {
+          const dx = roadCollisionNodes[i].x - x;
+          const dy = roadCollisionNodes[i].y - y;
+          if (Math.sqrt(dx * dx + dy * dy) < safeRadius) {
+            return false; 
+          }
+        }
+        return true; 
+      };
+
+      genRoads.forEach(pts => {
+        try {
+          const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
+          const roadLength = curve.getLength();
+          if (roadLength < 10) return; 
+          
+          const steps = Math.floor(roadLength / 15); 
+          if (steps === 0) return;
+          
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const pt = curve.getPoint(t);
+            const tangent = curve.getTangent(t);
+            const normal = new THREE.Vector3(-tangent.y, tangent.x, 0).normalize();
+            const roadRotation = Math.atan2(tangent.y, tangent.x);
+
+            [-1, 1].forEach(side => {
+              if (Math.random() > 0.4) {
+                const treeX = pt.x + (normal.x * (6 + Math.random() * 2) * side);
+                const treeY = pt.y + (normal.y * (6 + Math.random() * 2) * side);
+                
+                if (hasClearance(treeX, treeY, 5.5)) {
+                  genTrees.push({
+                    x: treeX, y: treeY, scale: 0.6 + Math.random() * 0.5
+                  });
+                }
+              }
+
+              if (Math.random() > 0.6 && i % 2 === 0) {
+                const houseX = pt.x + (normal.x * (18 + Math.random() * 5) * side);
+                const houseY = pt.y + (normal.y * (18 + Math.random() * 5) * side);
+                
+                if (hasClearance(houseX, houseY, 12)) {
+                  genProcHouses.push({
+                    x: houseX, y: houseY, rotation: roadRotation,
+                    w: 8 + Math.random() * 6,
+                    d: 10 + Math.random() * 8,
+                    h: 6 + Math.random() * 8 
+                  });
+                }
               }
             });
-            if (points.length > 1) genRoads.push(points);
           }
-        });
-
-        const roadCollisionNodes = [];
-        genRoads.forEach(pts => {
-          try {
-            const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
-            const steps = Math.floor(curve.getLength() / 3); 
-            for (let i = 0; i <= steps; i++) {
-              roadCollisionNodes.push(curve.getPoint(i / steps));
-            }
-          } catch (e) {}
-        });
-
-        const hasClearance = (x, y, safeRadius) => {
-          for (let i = 0; i < roadCollisionNodes.length; i++) {
-            const dx = roadCollisionNodes[i].x - x;
-            const dy = roadCollisionNodes[i].y - y;
-            if (Math.sqrt(dx * dx + dy * dy) < safeRadius) {
-              return false; 
-            }
-          }
-          return true; 
-        };
-
-        genRoads.forEach(pts => {
-          try {
-            const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0);
-            const roadLength = curve.getLength();
-            if (roadLength < 10) return; 
-            
-            const steps = Math.floor(roadLength / 15); 
-            if (steps === 0) return;
-            
-            for (let i = 0; i <= steps; i++) {
-              const t = i / steps;
-              const pt = curve.getPoint(t);
-              const tangent = curve.getTangent(t);
-              const normal = new THREE.Vector3(-tangent.y, tangent.x, 0).normalize();
-              const roadRotation = Math.atan2(tangent.y, tangent.x);
-
-              [-1, 1].forEach(side => {
-                if (Math.random() > 0.4) {
-                  const treeX = pt.x + (normal.x * (6 + Math.random() * 2) * side);
-                  const treeY = pt.y + (normal.y * (6 + Math.random() * 2) * side);
-                  
-                  if (hasClearance(treeX, treeY, 5.5)) {
-                    genTrees.push({
-                      x: treeX, y: treeY, scale: 0.6 + Math.random() * 0.5
-                    });
-                  }
-                }
-
-                if (Math.random() > 0.6 && i % 2 === 0) {
-                  const houseX = pt.x + (normal.x * (18 + Math.random() * 5) * side);
-                  const houseY = pt.y + (normal.y * (18 + Math.random() * 5) * side);
-                  
-                  if (hasClearance(houseX, houseY, 12)) {
-                    genProcHouses.push({
-                      x: houseX, y: houseY, rotation: roadRotation,
-                      w: 8 + Math.random() * 6,
-                      d: 10 + Math.random() * 8,
-                      h: 6 + Math.random() * 8 
-                    });
-                  }
-                }
-              });
-            }
-          } catch (e) {}
-        });
-        
-        setData({ buildings: genBuildings, roads: genRoads, trees: genTrees, fences: genFences, procHouses: genProcHouses });
-        setStatus('success');
-      } catch (error) {
-        console.error("Fetch error:", error);
-        if (isMounted) setStatus('error');
-      }
+        } catch (e) {}
+      });
+      
+      setData({ buildings: genBuildings, roads: genRoads, trees: genTrees, fences: genFences, procHouses: genProcHouses });
+      setStatus('success');
     };
     
     fetchEnvironment();
@@ -254,7 +268,7 @@ function EnvironmentData({ lat, lon }) {
     return (
       <Html center>
         <div className="bg-red-900 text-white px-4 py-2 md:px-6 md:py-3 rounded-lg shadow-2xl font-bold whitespace-nowrap text-sm md:text-base">
-          API Rate Limit Exceeded. Try moving the pin slightly!
+          All Map Servers are busy. Please try moving the pin slightly!
         </div>
       </Html>
     );
@@ -315,10 +329,8 @@ export default function App() {
   const [cameraEnabled, setCameraEnabled] = useState(true)
 
   return (
-    // RESPONSIVE FIX: flex-col on mobile, md:flex-row on desktop
     <div className="flex flex-col md:flex-row h-screen bg-gray-900 text-white font-sans overflow-hidden">
       
-      {/* RESPONSIVE SIDEBAR: h-[40vh] (40% height) on mobile, full height and fixed width on desktop */}
       <div className="w-full md:w-80 h-[40vh] md:h-full bg-gray-800 flex flex-col shadow-2xl z-10 shrink-0 border-b md:border-b-0 md:border-r border-gray-700">
         <div className="p-4 md:p-6 flex-1 overflow-y-auto">
           <h2 className="text-lg md:text-xl font-bold border-b border-gray-700 pb-3 mb-4 md:pb-4 md:mb-6">ForensiTwin Editor</h2>
@@ -384,7 +396,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* RESPONSIVE MAP AREA: flex-1 ensures it fills all remaining space on any device */}
       <div className="flex-1 relative w-full h-full bg-gray-900">
         {viewMode === '2D' && (
           <MapContainer center={[lat, lon]} zoom={17} className="w-full h-full">
